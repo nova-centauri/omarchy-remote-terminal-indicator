@@ -1,7 +1,5 @@
 # Remote Terminal Indicator
 
-![Terminal SSHed to wg-hub with a colored host border](screenshot.png)
-
 Colors the Hyprland border of any Omarchy terminal that has a remote SSH
 session open. The color is derived from the destination IP, so a given
 machine always gets the same band — on every window, after every reconnect.
