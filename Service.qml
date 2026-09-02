@@ -42,17 +42,18 @@ Item {
     return String(value == null ? "" : value).replace(/\\/g, "\\\\").replace(/"/g, '\\"')
   }
 
-  function setProp(address, prop, value) {
+  function setProp(address, prop, value, numeric) {
     var addr = HostBand.normalizeAddress(address)
     if (!addr) return
+    var encoded = numeric ? String(value) : '"' + luaEscape(value) + '"'
     Hyprland.dispatch(
       'hl.dsp.window.set_prop({ window = "'
         + luaEscape(addr)
         + '", prop = "'
         + luaEscape(prop)
-        + '", value = "'
-        + luaEscape(value)
-        + '" })'
+        + '", value = '
+        + encoded
+        + " })"
     )
   }
 
@@ -63,6 +64,33 @@ Item {
       if (isFinite(n) && n >= 0) return n
     } catch (e) {}
     return 2
+  }
+
+  function themeActiveBorder() {
+    return HostBand.parseHyprGradient(activeBorderProc.lastText) || "rgba(509475ff)"
+  }
+
+  function themeInactiveBorder() {
+    return HostBand.parseHyprGradient(inactiveBorderProc.lastText) || "rgba(595959aa)"
+  }
+
+  function refreshTheme() {
+    if (!borderSizeProc.running) borderSizeProc.running = true
+    if (!activeBorderProc.running) activeBorderProc.running = true
+    if (!inactiveBorderProc.running) inactiveBorderProc.running = true
+  }
+
+  function toplevelByAddress(address) {
+    var want = HostBand.normalizeAddress(address)
+    if (!want) return null
+    try {
+      var values = Hyprland.toplevels.values
+      for (var i = 0; i < values.length; i++) {
+        if (HostBand.normalizeAddress(values[i] && values[i].address) === want)
+          return values[i]
+      }
+    } catch (e) {}
+    return null
   }
 
   function rememberHost(name, ip) {
@@ -130,9 +158,14 @@ Item {
 
   function restore(address) {
     if (!address) return
+    // -1 clears the per-window override (Hyprland treats it as "not set").
+    // Then paint the live theme so the window does not keep the SSH color.
+    root.setProp(address, "active_border_color", -1, true)
+    root.setProp(address, "inactive_border_color", -1, true)
+    root.setProp(address, "border_size", -1, true)
+    root.setProp(address, "active_border_color", root.themeActiveBorder())
+    root.setProp(address, "inactive_border_color", root.themeInactiveBorder())
     root.setProp(address, "border_size", String(root.themeBorderSize()))
-    root.setProp(address, "active_border_color", "unset")
-    root.setProp(address, "inactive_border_color", "unset")
     if (!root.banded[address]) return
     var next = {}
     for (var key in root.banded) {
@@ -149,7 +182,7 @@ Item {
       root.restore(addresses[i])
   }
 
-  function consider(toplevel) {
+  function consider(toplevel, titleOverride) {
     if (!toplevel) return
     var address = HostBand.normalizeAddress(toplevel.address)
     if (!address) return
@@ -158,7 +191,10 @@ Item {
       return
     }
 
-    var host = HostBand.remoteHost(toplevel.title, root.localNames)
+    var title = titleOverride !== undefined && titleOverride !== null
+      ? titleOverride
+      : (toplevel.title || "")
+    var host = HostBand.remoteHost(title, root.localNames)
     if (!host) {
       if (root.banded[address]) root.restore(address)
       return
@@ -204,7 +240,25 @@ Item {
   }
 
   function scanSoon() {
+    try { Hyprland.refreshToplevels() } catch (e) {}
+    root.refreshTheme()
     scanTimer.restart()
+  }
+
+  function handleTitleEvent(event) {
+    var parts = []
+    try {
+      if (event && event.parse) parts = event.parse(2)
+    } catch (e) {
+      parts = []
+    }
+    if (!parts || parts.length < 1)
+      parts = HostBand.splitEventData(event && event.data)
+    var address = HostBand.normalizeAddress(parts[0])
+    var title = parts.length > 1 ? parts[1] : ""
+    var toplevel = root.toplevelByAddress(address)
+    if (toplevel) root.consider(toplevel, title)
+    else root.scanSoon()
   }
 
   function adoptLocalName(name) {
@@ -289,6 +343,26 @@ Item {
   }
 
   Process {
+    id: activeBorderProc
+    property string lastText: ""
+    command: ["hyprctl", "getoption", "general:col.active_border", "-j"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: activeBorderProc.lastText = text
+    }
+  }
+
+  Process {
+    id: inactiveBorderProc
+    property string lastText: ""
+    command: ["hyprctl", "getoption", "general:col.inactive_border", "-j"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: inactiveBorderProc.lastText = text
+    }
+  }
+
+  Process {
     id: resolveProc
     property string host: ""
     property string lastOut: ""
@@ -306,10 +380,12 @@ Item {
     ignoreUnknownSignals: true
     function onRawEvent(event) {
       var name = String(event && event.name ? event.name : "")
+      if (name === "windowtitle" || name === "windowtitlev2") {
+        root.handleTitleEvent(event)
+        return
+      }
       if (name === "openwindow"
           || name === "closewindow"
-          || name === "windowtitle"
-          || name === "windowtitlev2"
           || name === "activewindow"
           || name === "activewindowv2")
         root.scanSoon()
@@ -320,6 +396,16 @@ Item {
     target: Hyprland.toplevels
     ignoreUnknownSignals: true
     function onValuesChanged() { root.scanSoon() }
+  }
+
+  Instantiator {
+    model: Hyprland.toplevels
+    delegate: QtObject {
+      required property var modelData
+      readonly property string watchTitle: modelData && modelData.title ? String(modelData.title) : ""
+      onWatchTitleChanged: root.consider(modelData, watchTitle)
+      Component.onCompleted: root.consider(modelData)
+    }
   }
 
   IpcHandler {
@@ -336,7 +422,7 @@ Item {
     mkdirProc.running = true
     shortHostnameProc.running = true
     fullHostnameProc.running = true
-    borderSizeProc.running = true
+    root.refreshTheme()
     root.scanSoon()
   }
 

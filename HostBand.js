@@ -209,3 +209,32 @@ function numberFrom(value, fallback) {
   var n = Number(value)
   return isFinite(n) ? n : fallback
 }
+
+function parseHyprGradient(raw) {
+  var text = trim(raw)
+  if (!text) return ""
+  try {
+    var obj = JSON.parse(text)
+    if (obj && obj.gradient) text = String(obj.gradient)
+    else if (obj && obj.str) text = String(obj.str)
+  } catch (e) {}
+  var parts = trim(text).split(/\s+/)
+  var out = []
+  for (var i = 0; i < parts.length; i++) {
+    var tok = parts[i]
+    if (/^[0-9a-fA-F]{8}$/.test(tok))
+      out.push("rgba(" + tok.slice(2) + tok.slice(0, 2) + ")")
+    else if (/^[0-9a-fA-F]{6}$/.test(tok))
+      out.push("rgb(" + tok + ")")
+    else
+      out.push(tok)
+  }
+  return out.join(" ")
+}
+
+function splitEventData(data) {
+  var text = String(data == null ? "" : data)
+  var comma = text.indexOf(",")
+  if (comma === -1) return [trim(text), ""]
+  return [trim(text.slice(0, comma)), text.slice(comma + 1)]
+}
