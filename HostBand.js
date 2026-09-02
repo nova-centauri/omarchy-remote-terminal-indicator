@@ -102,23 +102,26 @@ function remoteHost(title, localNames) {
   return host
 }
 
-function windowClass(toplevel) {
-  if (!toplevel) return ""
-  var ipc = toplevel.lastIpcObject || {}
+function windowClass(win) {
+  if (!win) return ""
+  if (win["class"] || win.initialClass)
+    return String(win["class"] || win.initialClass || "")
+  var ipc = win.lastIpcObject || {}
   return String(ipc["class"] || ipc.initialClass || "")
 }
 
-function windowTags(toplevel) {
-  if (!toplevel) return []
-  var ipc = toplevel.lastIpcObject || {}
-  var tags = ipc.tags
+function windowTags(win) {
+  if (!win) return []
+  var tags = win.tags
+  if (tags == null && win.lastIpcObject)
+    tags = win.lastIpcObject.tags
   if (Array.isArray(tags)) return tags
   if (typeof tags === "string") return [tags]
   return []
 }
 
-function isTerminal(toplevel) {
-  var klass = windowClass(toplevel).toLowerCase()
+function isTerminal(win) {
+  var klass = windowClass(win).toLowerCase()
   if (klass.indexOf("ghostty") !== -1
       || klass.indexOf("foot") !== -1
       || klass.indexOf("kitty") !== -1
@@ -127,7 +130,7 @@ function isTerminal(toplevel) {
       || klass.indexOf("org.omarchy.") !== -1
       || klass.indexOf("tui.") !== -1)
     return true
-  var tags = windowTags(toplevel)
+  var tags = windowTags(win)
   for (var i = 0; i < tags.length; i++) {
     if (String(tags[i]).toLowerCase().indexOf("terminal") !== -1)
       return true

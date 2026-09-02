@@ -27,6 +27,7 @@ Item {
   property bool hostsLoaded: false
   property string lastError: ""
   property int bandedCount: 0
+  property int lastClientCount: 0
 
   function entryFromConfig() {
     var plugins = root.shell && root.shell.shellConfig ? root.shell.shellConfig.plugins : null
@@ -46,15 +47,14 @@ Item {
     var addr = HostBand.normalizeAddress(address)
     if (!addr) return
     var encoded = numeric ? String(value) : '"' + luaEscape(value) + '"'
-    Hyprland.dispatch(
-      'hl.dsp.window.set_prop({ window = "'
-        + luaEscape(addr)
-        + '", prop = "'
-        + luaEscape(prop)
-        + '", value = '
-        + encoded
-        + " })"
-    )
+    var request = 'hl.dsp.window.set_prop({ window = "'
+      + luaEscape(addr)
+      + '", prop = "'
+      + luaEscape(prop)
+      + '", value = '
+      + encoded
+      + " })"
+    Quickshell.execDetached(["hyprctl", "dispatch", request])
   }
 
   function themeBorderSize() {
@@ -78,19 +78,6 @@ Item {
     if (!borderSizeProc.running) borderSizeProc.running = true
     if (!activeBorderProc.running) activeBorderProc.running = true
     if (!inactiveBorderProc.running) inactiveBorderProc.running = true
-  }
-
-  function toplevelByAddress(address) {
-    var want = HostBand.normalizeAddress(address)
-    if (!want) return null
-    try {
-      var values = Hyprland.toplevels.values
-      for (var i = 0; i < values.length; i++) {
-        if (HostBand.normalizeAddress(values[i] && values[i].address) === want)
-          return values[i]
-      }
-    } catch (e) {}
-    return null
   }
 
   function rememberHost(name, ip) {
@@ -182,18 +169,18 @@ Item {
       root.restore(addresses[i])
   }
 
-  function consider(toplevel, titleOverride) {
-    if (!toplevel) return
-    var address = HostBand.normalizeAddress(toplevel.address)
+  function consider(win, titleOverride) {
+    if (!win) return
+    var address = HostBand.normalizeAddress(win.address)
     if (!address) return
-    if (!HostBand.isTerminal(toplevel)) {
+    if (!HostBand.isTerminal(win)) {
       if (root.banded[address]) root.restore(address)
       return
     }
 
     var title = titleOverride !== undefined && titleOverride !== null
       ? titleOverride
-      : (toplevel.title || "")
+      : (win.title || "")
     var host = HostBand.remoteHost(title, root.localNames)
     if (!host) {
       if (root.banded[address]) root.restore(address)
@@ -214,18 +201,29 @@ Item {
     root.applyBand(address, identity)
   }
 
-  function scan() {
-    var seen = {}
+  function applyClients(raw) {
+    var clients
     try {
-      var values = Hyprland.toplevels.values
-      for (var i = 0; i < values.length; i++) {
-        var toplevel = values[i]
-        var address = HostBand.normalizeAddress(toplevel && toplevel.address)
-        if (address) seen[address] = true
-        root.consider(toplevel)
-      }
+      clients = JSON.parse(raw || "[]")
     } catch (e) {
       root.lastError = String(e)
+      return
+    }
+    if (!Array.isArray(clients)) {
+      root.lastError = "hyprctl clients: not an array"
+      return
+    }
+    root.lastClientCount = clients.length
+    var seen = {}
+    for (var i = 0; i < clients.length; i++) {
+      var client = clients[i]
+      var address = HostBand.normalizeAddress(client && client.address)
+      if (address) seen[address] = true
+      try {
+        root.consider(client)
+      } catch (e) {
+        root.lastError = String(e)
+      }
     }
     for (var bandedAddress in root.banded) {
       if (!seen[bandedAddress]) {
@@ -239,26 +237,14 @@ Item {
     root.bandedCount = Object.keys(root.banded).length
   }
 
-  function scanSoon() {
-    try { Hyprland.refreshToplevels() } catch (e) {}
-    root.refreshTheme()
-    scanTimer.restart()
+  function scan() {
+    if (clientsProc.running) return
+    clientsProc.running = true
   }
 
-  function handleTitleEvent(event) {
-    var parts = []
-    try {
-      if (event && event.parse) parts = event.parse(2)
-    } catch (e) {
-      parts = []
-    }
-    if (!parts || parts.length < 1)
-      parts = HostBand.splitEventData(event && event.data)
-    var address = HostBand.normalizeAddress(parts[0])
-    var title = parts.length > 1 ? parts[1] : ""
-    var toplevel = root.toplevelByAddress(address)
-    if (toplevel) root.consider(toplevel, title)
-    else root.scanSoon()
+  function scanSoon() {
+    root.refreshTheme()
+    scanTimer.restart()
   }
 
   function adoptLocalName(name) {
@@ -277,6 +263,7 @@ Item {
       pluginId: root.pluginId,
       borderSize: root.borderSize,
       bandedCount: root.bandedCount,
+      lastClientCount: root.lastClientCount,
       sessions: sessions,
       lastError: root.lastError
     })
@@ -363,6 +350,15 @@ Item {
   }
 
   Process {
+    id: clientsProc
+    command: ["hyprctl", "clients", "-j"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.applyClients(text)
+    }
+  }
+
+  Process {
     id: resolveProc
     property string host: ""
     property string lastOut: ""
@@ -380,11 +376,9 @@ Item {
     ignoreUnknownSignals: true
     function onRawEvent(event) {
       var name = String(event && event.name ? event.name : "")
-      if (name === "windowtitle" || name === "windowtitlev2") {
-        root.handleTitleEvent(event)
-        return
-      }
-      if (name === "openwindow"
+      if (name === "windowtitle"
+          || name === "windowtitlev2"
+          || name === "openwindow"
           || name === "closewindow"
           || name === "activewindow"
           || name === "activewindowv2")
@@ -392,20 +386,11 @@ Item {
     }
   }
 
-  Connections {
-    target: Hyprland.toplevels
-    ignoreUnknownSignals: true
-    function onValuesChanged() { root.scanSoon() }
-  }
-
-  Instantiator {
-    model: Hyprland.toplevels
-    delegate: QtObject {
-      required property var modelData
-      readonly property string watchTitle: modelData && modelData.title ? String(modelData.title) : ""
-      onWatchTitleChanged: root.consider(modelData, watchTitle)
-      Component.onCompleted: root.consider(modelData)
-    }
+  Timer {
+    interval: 750
+    running: true
+    repeat: true
+    onTriggered: root.scan()
   }
 
   IpcHandler {
