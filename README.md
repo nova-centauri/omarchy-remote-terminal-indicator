@@ -1,5 +1,7 @@
 # Remote Terminal Indicator
 
+![Terminal SSHed to wg-hub with a colored host border](screenshot.png)
+
 Gives Omarchy terminal sessions a colored border if they open a remote
 session. The color is derived from the destination IP, so a given machine
 always gets the same band — on every window, after every reconnect.
