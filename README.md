@@ -1,14 +1,20 @@
 # Remote Terminal Indicator
 
-Colors the Hyprland border of any Omarchy terminal that has a remote SSH
-session open. The color is derived from the destination IP, so a given
-machine always gets the same band — on every window, after every reconnect.
+Colors the Hyprland border of an Omarchy terminal while a **local OpenSSH
+client** is running in that window's process tree. The color is hashed from
+the destination argument of that `ssh` process (`ssh prod-db` and
+`ssh 10.0.0.12` are different identities). When the local `ssh` process
+exits, the plugin restores the border properties it captured on that window
+before it painted.
 
-It watches terminal titles (`user@host: cwd`) and paints a thin host-colored
-frame. When the remote session ends, the theme border comes back.
+This is a decorative indicator. It does **not** read window titles, so a
+remote host cannot impersonate another machine by sending OSC title
+sequences, and it cannot enqueue DNS or resolver work. Title text is never
+used as evidence that an SSH session exists.
 
 Works with Foot, Ghostty, Kitty, Alacritty, WezTerm, and anything Hyprland
-tags as a terminal.
+tags as a terminal. SSH inside tmux or screen is not detected: those
+clients live under the multiplexer, not the terminal process.
 
 ## Install
 
@@ -24,16 +30,12 @@ omarchy-shell shell rescanPlugins
 
 ## Use
 
-SSH as you already do. The terminal title has to look like a remote shell:
+SSH as you already do from the terminal:
 
+```sh
+ssh you@prod-db
+ssh root@10.0.0.12
 ```
-you@prod-db: ~
-you@staging:/var/www
-root@10.0.0.12:~
-```
-
-Foot, Ghostty, and the usual prompt-title setups already emit that. Local
-titles (`you@your-laptop: ~`) are ignored.
 
 Inspect live sessions:
 
@@ -53,12 +55,9 @@ Optional keys on the `plugins[]` entry in `~/.config/omarchy/shell.json`:
 }
 ```
 
-`borderSize` is the Hyprland border width while a session is remote. Default
-is `3`. Theme border width is restored when you disconnect.
-
-Host → IP mappings are cached in
-`~/.cache/omarchy-remote-terminal-indicator/hosts` so a given hostname keeps
-the same color even if DNS is slow next time.
+`borderSize` is the Hyprland border width while a local `ssh` process is
+present. Default is `3`. The captured per-window border is restored when
+that process ends or the plugin is removed.
 
 ## Remove
 
@@ -66,7 +65,8 @@ the same color even if DNS is slow next time.
 omarchy plugin remove io.github.nova-centauri.remote-terminal-indicator
 ```
 
-Open SSH windows drop back to the theme border as the plugin unloads.
+Open SSH windows drop back to their captured border via a detached
+`systemd-run` restore so unload does not cancel the cleanup.
 
 ## License
 

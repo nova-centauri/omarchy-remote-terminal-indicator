@@ -15,28 +15,55 @@ function eq(actual, expected, label) {
   console.log("ok", label)
 }
 
-const local = ctx.buildLocalNames(["XER-OMARCHY", "xer-omarchy.local"])
-
-eq(ctx.remoteHost("steve@XER-OMARCHY:~", local), null, "local host with :~")
-eq(ctx.remoteHost("steve@XER-OMARCHY: ~", local), null, "local host with colon space")
-eq(ctx.remoteHost("steve@localhost: /tmp", local), null, "localhost")
-eq(ctx.remoteHost("root@wg-hub: ~", local), "wg-hub", "remote host")
-eq(ctx.remoteHost("🔔 turkey3294@task-manager-server: /opt/taskapp", local), "task-manager-server", "emoji prefix title")
-eq(ctx.remoteHost("root@prod-db:/var/www", local), "prod-db", "remote path")
-eq(ctx.remoteHost("root@10.0.0.12:~", local), "10.0.0.12", "ipv4")
-eq(ctx.remoteHost("root@[2001:db8::1]: ~", local), "2001:db8::1", "ipv6")
-eq(ctx.remoteHost("btop", local), null, "non ssh title")
 eq(ctx.isTerminal({ lastIpcObject: { class: "foot", tags: ["terminal*"] } }), true, "foot terminal")
 eq(ctx.isTerminal({ "class": "com.mitchellh.ghostty", tags: ["terminal*"], title: "root@wg-hub: ~" }), true, "hyprctl ghostty client")
 eq(ctx.isTerminal({ lastIpcObject: { class: "firefox" } }), false, "firefox")
 eq(ctx.colorFromIdentity("10.0.0.12").active.startsWith("rgb("), true, "active color")
-eq(ctx.cornerPalette("10.0.0.12").fill.charAt(0), "#", "corner palette")
-eq(ctx.firstIpv4("10.0.0.12  STREAM  wg-hub"), "10.0.0.12", "getent parse")
 eq(ctx.normalizeAddress("564d479934b0"), "0x564d479934b0", "address prefix")
+eq(ctx.normalizeAddress("0xZZ"), "", "reject junk address")
 eq(ctx.parseHyprGradient('{"gradient":"ff509475 0deg","set":true}'), "rgba(509475ff) 0deg", "theme active gradient")
 eq(ctx.parseHyprGradient('{"gradient":"aa595959 0deg","set":true}'), "rgba(595959aa) 0deg", "theme inactive gradient")
-eq(ctx.splitEventData("0xabc,root@wg-hub: ~")[1], "root@wg-hub: ~", "title event split")
-eq(ctx.remoteHost("~", local), null, "cwd-only title")
+eq(ctx.isValidIdentity("prod-db"), "prod-db", "hostname identity")
+eq(ctx.isValidIdentity("10.0.0.12"), "10.0.0.12", "ipv4 identity")
+eq(ctx.isValidIdentity("2001:db8::1"), "2001:db8::1", "ipv6 identity")
+eq(ctx.isValidIdentity("prod-db;rm -rf /"), "", "reject shell host")
+eq(ctx.isValidIdentity("a".repeat(300)), "", "reject overlong host")
+eq(ctx.isValidIdentity("you@prod-db: ~"), "", "reject title text")
+eq(ctx.isValidIdentity("localhost"), "", "reject localhost")
+eq(ctx.isValidIdentity("127.0.0.1"), "", "reject loopback")
+eq(ctx.isValidPid(1), false, "reject pid 1")
+eq(ctx.isValidPid(4321), true, "accept pid")
+
+const huge = "[" + "{},".repeat(ctx.LIMITS.maxClients + 2) + "{}]"
+eq(ctx.parseClientsJson(huge).ok, true, "client cap still parses")
+eq(ctx.parseClientsJson(huge).clients.length, ctx.LIMITS.maxClients, "client cap applied")
+eq(ctx.parseClientsJson("x".repeat(ctx.LIMITS.maxClientsJsonBytes + 1)).ok, false, "json byte cap")
+eq(ctx.parseClientsJson("not-json").ok, false, "json parse fail")
+
+const terminals = ctx.takeTerminals([
+  { address: "0xabc", class: "foot", pid: 100, title: "root@evil: ~" },
+  { address: "0xdef", class: "firefox", pid: 101, title: "root@evil: ~" },
+  { address: "nope", class: "foot", pid: 102 }
+])
+eq(terminals.length, 1, "only valid terminal kept")
+eq(terminals[0].pid, 100, "terminal pid")
+eq(ctx.parseIdentityMap('{"100":"prod-db","nope":"x"}').map["100"], "prod-db", "identity map")
+eq(ctx.parseIdentityMap('{"100":"prod-db;rm"}').map["100"] === undefined, true, "reject bad identity")
+eq(ctx.parseGetpropBatch("2\nff509475 0deg\naa595959 0deg\n").size, 2, "getprop batch size")
+eq(ctx.parseGetpropBatch("2\nff509475 0deg\naa595959 0deg\n").active, "rgba(509475ff) 0deg", "getprop batch color")
+
+const lua = ctx.buildPaintLua({
+  "0xabc": { size: 3, active: "rgb(AABBCC)", inactive: "rgba(AABBCC99)" }
+})
+eq(lua.count, 1, "paint lua count")
+eq(lua.lua.indexOf("0xabc") !== -1, true, "paint lua address")
+eq(lua.lua.length <= ctx.LIMITS.maxLuaBytes, true, "paint lua bound")
+
+const many = {}
+for (let i = 0; i < 80; i++)
+  many["0x" + i.toString(16)] = { size: 3, active: "rgb(AABBCC)", inactive: "rgba(AABBCC99)" }
+eq(ctx.buildPaintLua(many).count <= ctx.LIMITS.maxPaintOps, true, "paint op cap")
+eq(ctx.statusSessions(many).length, ctx.LIMITS.maxSessionsIpc, "ipc session cap")
 
 if (process.exitCode)
   process.exit(process.exitCode)

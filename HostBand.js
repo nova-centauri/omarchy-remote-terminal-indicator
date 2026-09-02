@@ -1,105 +1,107 @@
+var LIMITS = {
+  maxClientsJsonBytes: 524288,
+  maxClients: 256,
+  maxTerminals: 64,
+  maxBanded: 32,
+  maxPids: 64,
+  maxPaintOps: 32,
+  maxLuaBytes: 12288,
+  maxSessionsIpc: 32,
+  maxHostBytes: 253,
+  maxGetpropBytes: 4096,
+  maxIdentityJsonBytes: 16384,
+  clientsTimeoutMs: 1500,
+  identityTimeoutMs: 1500,
+  captureTimeoutMs: 1500,
+  paintTimeoutMs: 2000,
+  pollIdleMs: 2500,
+  pollActiveMs: 1000,
+  pollFailMaxMs: 8000,
+  scanDebounceMs: 250
+}
+
 function trim(value) {
   return String(value == null ? "" : value).replace(/^\s+|\s+$/g, "")
 }
 
-function lower(value) {
-  return trim(value).toLowerCase()
+function clipString(value, max) {
+  var text = String(value == null ? "" : value)
+  var limit = Number(max)
+  if (!isFinite(limit) || limit < 0) return ""
+  if (text.length <= limit) return text
+  return text.slice(0, limit)
+}
+
+function objectCount(map) {
+  var n = 0
+  var source = map || {}
+  for (var key in source) n++
+  return n
+}
+
+function copyObject(map) {
+  var next = {}
+  var source = map || {}
+  for (var key in source) next[key] = source[key]
+  return next
+}
+
+function luaEscape(value) {
+  return String(value == null ? "" : value).replace(/\\/g, "\\\\").replace(/"/g, '\\"')
 }
 
 function normalizeAddress(value) {
   var address = trim(value)
   if (!address) return ""
-  if (address.indexOf("0x") === 0 || address.indexOf("0X") === 0)
+  if (address.length > 32) return ""
+  if (address.indexOf("0x") === 0 || address.indexOf("0X") === 0) {
+    if (!/^0x[0-9a-fA-F]{1,16}$/.test(address)) return ""
     return address.toLowerCase()
-  if (/^[0-9a-fA-F]+$/.test(address))
+  }
+  if (/^[0-9a-fA-F]{1,16}$/.test(address))
     return "0x" + address.toLowerCase()
-  return address
+  return ""
+}
+
+function isValidPid(value) {
+  var n = Number(value)
+  return isFinite(n) && Math.floor(n) === n && n >= 2 && n <= 4194304
 }
 
 function isIpv4(value) {
-  return /^\d{1,3}(?:\.\d{1,3}){3}$/.test(trim(value))
+  var host = trim(value)
+  if (!/^\d{1,3}(?:\.\d{1,3}){3}$/.test(host)) return false
+  var parts = host.split(".")
+  for (var i = 0; i < parts.length; i++) {
+    var n = Number(parts[i])
+    if (n > 255) return false
+  }
+  return true
 }
 
 function isIpv6(value) {
   var host = trim(value)
-  return host.indexOf(":") !== -1 && host.indexOf(" ") === -1
+  if (host.indexOf(":") === -1 || host.indexOf(" ") !== -1) return false
+  if (host.length > 45) return false
+  return /^[0-9a-fA-F:]+$/.test(host)
 }
 
-function parseHostsFile(body) {
-  var map = {}
-  var lines = String(body || "").split("\n")
-  for (var i = 0; i < lines.length; i++) {
-    var match = trim(lines[i]).match(/^(\S+)\s+(\S+)$/)
-    if (!match) continue
-    map[match[1]] = match[2]
-    map[match[1].toLowerCase()] = match[2]
-  }
-  return map
+function isValidHostname(value) {
+  var host = trim(value)
+  if (!host || host.length > LIMITS.maxHostBytes) return false
+  if (host.charAt(0) === "-" || host.charAt(host.length - 1) === "-") return false
+  if (host.indexOf("..") !== -1) return false
+  return /^(?=.{1,253}$)[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$/.test(host)
 }
 
-function serializeHostsFile(map) {
-  var seen = {}
-  var lines = []
-  var source = map || {}
-  for (var name in source) {
-    var ip = source[name]
-    if (!name || !ip || seen[name]) continue
-    seen[name] = true
-    lines.push(name + " " + ip)
-  }
-  lines.sort()
-  return lines.length ? lines.join("\n") + "\n" : ""
-}
-
-function buildLocalNames(names) {
-  var map = {
-    localhost: true,
-    "127.0.0.1": true,
-    "::1": true
-  }
-  var list = names || []
-  for (var i = 0; i < list.length; i++) {
-    var value = trim(list[i])
-    if (!value) continue
-    map[value] = true
-    map[value.toLowerCase()] = true
-    var short = value.split(".")[0]
-    if (short) {
-      map[short] = true
-      map[short.toLowerCase()] = true
-    }
-  }
-  return map
-}
-
-function isLocalHost(host, localNames) {
-  var value = trim(host)
-  if (!value) return true
-  if (value === "localhost" || value === "127.0.0.1" || value === "::1")
-    return true
-  if (localNames && (localNames[value] || localNames[value.toLowerCase()]))
-    return true
-  return false
-}
-
-function extractHost(rest) {
-  var value = trim(rest)
-  if (!value) return ""
-  var bracket = value.match(/^\[([^\]]+)\](?::.*)?$/)
-  if (bracket) return trim(bracket[1])
-  var withPath = value.match(/^(.+?)(?::(?:~|\/|\s).*)$/)
-  if (withPath) return trim(withPath[1])
-  return value
-}
-
-function remoteHost(title, localNames) {
-  var value = trim(title).replace(/\s+/g, " ")
-  if (!value) return null
-  var match = value.match(/([^@\s]+)@(.+)$/)
-  if (!match) return null
-  var host = extractHost(match[2])
-  if (!host || isLocalHost(host, localNames)) return null
-  return host
+function isValidIdentity(value) {
+  var host = trim(value)
+  if (!host || host.length > LIMITS.maxHostBytes) return ""
+  var lowered = host.toLowerCase()
+  if (lowered === "localhost" || lowered === "127.0.0.1" || lowered === "::1")
+    return ""
+  if (isIpv4(host) || isIpv6(host) || isValidHostname(host)) return host
+  return ""
 }
 
 function windowClass(win) {
@@ -120,6 +122,13 @@ function windowTags(win) {
   return []
 }
 
+function windowPid(win) {
+  if (!win) return 0
+  if (win.pid != null) return Number(win.pid)
+  var ipc = win.lastIpcObject || {}
+  return Number(ipc.pid || 0)
+}
+
 function isTerminal(win) {
   var klass = windowClass(win).toLowerCase()
   if (klass.indexOf("ghostty") !== -1
@@ -136,6 +145,99 @@ function isTerminal(win) {
       return true
   }
   return false
+}
+
+function parseClientsJson(raw) {
+  var text = String(raw == null ? "" : raw)
+  if (text.length > LIMITS.maxClientsJsonBytes) {
+    return { ok: false, error: "hyprctl clients: output too large", clients: [] }
+  }
+  var clients
+  try {
+    clients = JSON.parse(text || "[]")
+  } catch (e) {
+    return { ok: false, error: String(e), clients: [] }
+  }
+  if (!Array.isArray(clients))
+    return { ok: false, error: "hyprctl clients: not an array", clients: [] }
+  if (clients.length > LIMITS.maxClients)
+    clients = clients.slice(0, LIMITS.maxClients)
+  return { ok: true, error: "", clients: clients }
+}
+
+function takeTerminals(clients) {
+  var out = []
+  var list = clients || []
+  for (var i = 0; i < list.length; i++) {
+    var client = list[i]
+    if (!isTerminal(client)) continue
+    var address = normalizeAddress(client && client.address)
+    var pid = windowPid(client)
+    if (!address || !isValidPid(pid)) continue
+    out.push({
+      address: address,
+      pid: pid,
+      client: client
+    })
+    if (out.length >= LIMITS.maxTerminals) break
+  }
+  return out
+}
+
+function parseIdentityMap(raw) {
+  var text = String(raw == null ? "" : raw)
+  if (text.length > LIMITS.maxIdentityJsonBytes)
+    return { ok: false, error: "ssh-identities: output too large", map: {} }
+  var parsed
+  try {
+    parsed = JSON.parse(text || "{}")
+  } catch (e) {
+    return { ok: false, error: "ssh-identities: " + String(e), map: {} }
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+    return { ok: false, error: "ssh-identities: not an object", map: {} }
+  var map = {}
+  var count = 0
+  for (var key in parsed) {
+    if (!isValidPid(key)) continue
+    var identity = isValidIdentity(parsed[key])
+    if (!identity) continue
+    map[String(Number(key))] = identity
+    count++
+    if (count >= LIMITS.maxPids) break
+  }
+  return { ok: true, error: "", map: map }
+}
+
+function parseGetpropBatch(text) {
+  var body = clipString(text, LIMITS.maxGetpropBytes)
+  var lines = body.split("\n")
+  var values = []
+  for (var i = 0; i < lines.length; i++) {
+    var line = trim(lines[i])
+    if (!line) continue
+    if (line.charAt(0) === "{") {
+      try {
+        var obj = JSON.parse(line)
+        if (obj && obj.border_size != null) values.push(String(obj.border_size))
+        else if (obj && obj.active_border_color != null) values.push(String(obj.active_border_color))
+        else if (obj && obj.inactive_border_color != null) values.push(String(obj.inactive_border_color))
+      } catch (e) {}
+      continue
+    }
+    values.push(line)
+  }
+  if (values.length < 3) return null
+  var size = Number(values[0])
+  if (!isFinite(size) || size < 0 || size > 20) return null
+  var active = parseHyprGradient(values[1])
+  var inactive = parseHyprGradient(values[2])
+  if (!active || !inactive) return null
+  return {
+    size: Math.round(size),
+    active: active,
+    inactive: inactive
+  }
 }
 
 function hue2rgb(p, q, t) {
@@ -203,42 +305,6 @@ function colorFromIdentity(identity) {
   }
 }
 
-function cssHex(rgb) {
-  return "#" + hex2(rgb[0]) + hex2(rgb[1]) + hex2(rgb[2])
-}
-
-function cornerPalette(identity) {
-  var hue = hueFromIdentity(identity)
-  return {
-    fill: cssHex(hslToRgb(hue, 0.56, 0.52)),
-    dim: cssHex(hslToRgb(hue, 0.60, 0.38)),
-    sheen: cssHex(hslToRgb(hue, 0.40, 0.78))
-  }
-}
-
-function clientVisible(win) {
-  if (!win) return false
-  if (win.mapped === false || win.hidden === true || win.visible === false)
-    return false
-  return true
-}
-
-function clientRect(win) {
-  var at = win && win.at
-  var size = win && win.size
-  return {
-    x: Math.round(Number(at && at[0])),
-    y: Math.round(Number(at && at[1])),
-    w: Math.round(Number(size && size[0])),
-    h: Math.round(Number(size && size[1]))
-  }
-}
-
-function firstIpv4(text) {
-  var match = String(text || "").match(/\b(\d{1,3}(?:\.\d{1,3}){3})\b/)
-  return match ? match[1] : ""
-}
-
 function numberFrom(value, fallback) {
   var n = Number(value)
   return isFinite(n) ? n : fallback
@@ -260,15 +326,68 @@ function parseHyprGradient(raw) {
       out.push("rgba(" + tok.slice(2) + tok.slice(0, 2) + ")")
     else if (/^[0-9a-fA-F]{6}$/.test(tok))
       out.push("rgb(" + tok + ")")
-    else
+    else if (/^-?\d+(?:deg)?$/.test(tok) || tok === "deg")
       out.push(tok)
+    else if (/^rgba?\(/i.test(tok))
+      out.push(tok)
+    else
+      return ""
   }
   return out.join(" ")
 }
 
-function splitEventData(data) {
-  var text = String(data == null ? "" : data)
-  var comma = text.indexOf(",")
-  if (comma === -1) return [trim(text), ""]
-  return [trim(text.slice(0, comma)), text.slice(comma + 1)]
+function setLine(addr, spec) {
+  var lines = [
+    "  if addr == \"" + luaEscape(addr) + "\" then"
+  ]
+  lines.push("    set(w, \"border_size\", " + Number(spec.size) + ")")
+  lines.push("    set(w, \"active_border_color\", \"" + luaEscape(spec.active) + "\")")
+  lines.push("    set(w, \"inactive_border_color\", \"" + luaEscape(spec.inactive) + "\")")
+  lines.push("  end")
+  return lines
+}
+
+function buildPaintLua(ops) {
+  var lines = [
+    "local function set(w, p, v) hl.dispatch(hl.dsp.window.set_prop({ window = w, prop = p, value = v })) end",
+    "for _, w in ipairs(hl.get_windows() or {}) do",
+    "  local addr = tostring(w.address or \"\")"
+  ]
+  var count = 0
+  var used = {}
+  var source = ops || {}
+  for (var addr in source) {
+    var spec = source[addr]
+    var normalized = normalizeAddress(addr)
+    if (!spec || !normalized || used[normalized]) continue
+    if (spec.size == null || !spec.active || !spec.inactive) continue
+    used[normalized] = true
+    var chunk = setLine(normalized, spec)
+    var candidate = lines.concat(chunk)
+    candidate.push("end")
+    if (candidate.join("\n").length > LIMITS.maxLuaBytes) break
+    lines = lines.concat(chunk)
+    count++
+    if (count >= LIMITS.maxPaintOps) break
+  }
+  lines.push("end")
+  return {
+    lua: lines.join("\n"),
+    count: count
+  }
+}
+
+function statusSessions(banded) {
+  var sessions = []
+  var source = banded || {}
+  for (var address in source) {
+    var row = source[address]
+    var identity = row && row.identity ? row.identity : row
+    sessions.push({
+      address: address,
+      identity: String(identity || "")
+    })
+    if (sessions.length >= LIMITS.maxSessionsIpc) break
+  }
+  return sessions
 }
