@@ -11,9 +11,10 @@ Item {
   property var manifest: null
   property string omarchyPath: ""
 
-  readonly property string pluginId: manifest && manifest.id ? String(manifest.id) : "io.github.nova-centauri.ssh-host-band"
+  readonly property string pluginId: manifest && manifest.id ? String(manifest.id) : "io.github.nova-centauri.remote-terminal-indicator"
   readonly property string home: Quickshell.env("HOME") || ""
-  readonly property string cacheDir: home + "/.cache/omarchy-ssh-host-band"
+  readonly property string cacheDir: home + "/.cache/omarchy-remote-terminal-indicator"
+  readonly property string legacyCacheDir: home + "/.cache/omarchy-ssh-host-band"
   readonly property string hostsPath: cacheDir + "/hosts"
   readonly property var pluginEntry: root.entryFromConfig()
   readonly property int borderSize: Math.max(1, Math.min(20, Math.round(HostBand.numberFrom(root.pluginEntry.borderSize, 5))))
@@ -253,7 +254,9 @@ Item {
 
   Process {
     id: mkdirProc
-    command: ["mkdir", "-p", root.cacheDir]
+    command: ["bash", "-c",
+      "mkdir -p \"$1\" && if [ ! -f \"$1/hosts\" ] && [ -f \"$2/hosts\" ]; then cp -n \"$2/hosts\" \"$1/hosts\"; fi",
+      "migrate-cache", root.cacheDir, root.legacyCacheDir]
     onExited: hostsFile.reload()
   }
 

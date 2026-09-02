@@ -1,11 +1,11 @@
 {
   "schemaVersion": 1,
-  "id": "io.github.nova-centauri.ssh-host-band",
-  "name": "SSH Host Band",
+  "id": "io.github.nova-centauri.remote-terminal-indicator",
+  "name": "Remote Terminal Indicator",
   "version": "1.0.0",
   "author": "Steve Barrett",
   "license": "MIT",
-  "description": "Colors the Hyprland border of a terminal while it has an SSH session open. Each remote host gets a stable color derived from its IP.",
+  "description": "Gives terminal sessions a colored border if they open a remote session. The color is derived from the IP so it stays consistent.",
   "kinds": [
     "service"
   ],

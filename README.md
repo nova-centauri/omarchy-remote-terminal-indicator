@@ -1,14 +1,11 @@
-# SSH Host Band
+# Remote Terminal Indicator
 
-A colored box around any Omarchy terminal that is SSHed into a remote host.
+Gives Omarchy terminal sessions a colored border if they open a remote
+session. The color is derived from the destination IP, so a given machine
+always gets the same band — on every window, after every reconnect.
 
-The color is stable per machine: it is derived from the destination IP when
-that is known, so `prod-db` is always the same band, on every window, after
-every reconnect.
-
-This is the Omarchy shell plugin form of the Hyprland `ssh-host-band` window
-hook. It watches terminal titles (`user@host: cwd`), thickens the Hyprland
-border, and paints it with that host's color. When the SSH session ends, the
+It watches terminal titles (`user@host: cwd`), thickens the Hyprland border,
+and paints it with that host's color. When the remote session ends, the
 window goes back to the theme border.
 
 Works with Foot, Ghostty, Kitty, Alacritty, WezTerm, and anything Hyprland
@@ -17,7 +14,7 @@ tags as a terminal.
 ## Install
 
 ```sh
-omarchy plugin add https://github.com/nova-centauri/omarchy-ssh-host-band.git --enable
+omarchy plugin add https://github.com/nova-centauri/omarchy-remote-terminal-indicator.git --enable
 ```
 
 The shell picks it up without a restart. To force a rescan:
@@ -42,8 +39,8 @@ titles (`you@your-laptop: ~`) are ignored.
 Inspect live sessions:
 
 ```sh
-omarchy-shell io.github.nova-centauri.ssh-host-band status
-omarchy-shell io.github.nova-centauri.ssh-host-band refresh
+omarchy-shell io.github.nova-centauri.remote-terminal-indicator status
+omarchy-shell io.github.nova-centauri.remote-terminal-indicator refresh
 ```
 
 ## Configure
@@ -52,7 +49,7 @@ Optional keys on the `plugins[]` entry in `~/.config/omarchy/shell.json`:
 
 ```json
 {
-  "id": "io.github.nova-centauri.ssh-host-band",
+  "id": "io.github.nova-centauri.remote-terminal-indicator",
   "borderSize": 5
 }
 ```
@@ -60,16 +57,17 @@ Optional keys on the `plugins[]` entry in `~/.config/omarchy/shell.json`:
 `borderSize` is the Hyprland border width while a session is remote. Default
 is `5`. Theme border width is restored when you disconnect.
 
-Host → IP mappings are cached in `~/.cache/omarchy-ssh-host-band/hosts` so a
-given hostname keeps the same color even if DNS is slow next time.
+Host → IP mappings are cached in
+`~/.cache/omarchy-remote-terminal-indicator/hosts` so a given hostname keeps
+the same color even if DNS is slow next time.
 
 ## Remove
 
 ```sh
-omarchy plugin remove io.github.nova-centauri.ssh-host-band
+omarchy plugin remove io.github.nova-centauri.remote-terminal-indicator
 ```
 
-Open SSH windows drop back to the theme border as the plugin unloads.
+Open remote terminals drop back to the theme border as the plugin unloads.
 
 ## License
 
