@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "id": "io.github.nova-centauri.remote-terminal-indicator",
   "name": "Remote Terminal Indicator",
-  "version": "1.0.3",
+  "version": "1.1.0",
   "author": "Steve Barrett",
   "license": "MIT",
-  "description": "Gives terminal sessions a colored border if they open a remote session. The color is derived from the IP so it stays consistent.",
+  "description": "A small 45-degree corner tint on terminal windows with a remote SSH session. The color is derived from the host IP so it stays consistent.",
   "kinds": [
     "service"
   ],

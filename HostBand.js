@@ -203,6 +203,37 @@ function colorFromIdentity(identity) {
   }
 }
 
+function cssHex(rgb) {
+  return "#" + hex2(rgb[0]) + hex2(rgb[1]) + hex2(rgb[2])
+}
+
+function cornerPalette(identity) {
+  var hue = hueFromIdentity(identity)
+  return {
+    fill: cssHex(hslToRgb(hue, 0.56, 0.52)),
+    dim: cssHex(hslToRgb(hue, 0.60, 0.38)),
+    sheen: cssHex(hslToRgb(hue, 0.40, 0.78))
+  }
+}
+
+function clientVisible(win) {
+  if (!win) return false
+  if (win.mapped === false || win.hidden === true || win.visible === false)
+    return false
+  return true
+}
+
+function clientRect(win) {
+  var at = win && win.at
+  var size = win && win.size
+  return {
+    x: Math.round(Number(at && at[0])),
+    y: Math.round(Number(at && at[1])),
+    w: Math.round(Number(size && size[0])),
+    h: Math.round(Number(size && size[1]))
+  }
+}
+
 function firstIpv4(text) {
   var match = String(text || "").match(/\b(\d{1,3}(?:\.\d{1,3}){3})\b/)
   return match ? match[1] : ""

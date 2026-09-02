@@ -29,6 +29,7 @@ eq(ctx.isTerminal({ lastIpcObject: { class: "foot", tags: ["terminal*"] } }), tr
 eq(ctx.isTerminal({ "class": "com.mitchellh.ghostty", tags: ["terminal*"], title: "root@wg-hub: ~" }), true, "hyprctl ghostty client")
 eq(ctx.isTerminal({ lastIpcObject: { class: "firefox" } }), false, "firefox")
 eq(ctx.colorFromIdentity("10.0.0.12").active.startsWith("rgb("), true, "active color")
+eq(ctx.cornerPalette("10.0.0.12").fill.charAt(0), "#", "corner palette")
 eq(ctx.firstIpv4("10.0.0.12  STREAM  wg-hub"), "10.0.0.12", "getent parse")
 eq(ctx.normalizeAddress("564d479934b0"), "0x564d479934b0", "address prefix")
 eq(ctx.parseHyprGradient('{"gradient":"ff509475 0deg","set":true}'), "rgba(509475ff) 0deg", "theme active gradient")
