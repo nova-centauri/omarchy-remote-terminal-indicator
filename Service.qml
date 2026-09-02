@@ -2,8 +2,6 @@ import QtQuick
 import Quickshell
 import Quickshell.Hyprland
 import Quickshell.Io
-import Quickshell.Wayland
-import qs.Commons
 import "HostBand.js" as HostBand
 
 Item {
@@ -19,22 +17,19 @@ Item {
   readonly property string legacyCacheDir: home + "/.cache/omarchy-ssh-host-band"
   readonly property string hostsPath: cacheDir + "/hosts"
   readonly property var pluginEntry: root.entryFromConfig()
-  readonly property int cornerSize: Math.max(16, Math.min(48, Math.round(HostBand.numberFrom(root.pluginEntry.cornerSize, 26))))
+  readonly property int borderSize: Math.max(1, Math.min(8, Math.round(HostBand.numberFrom(root.pluginEntry.borderSize, 3))))
 
   property var localNames: ({})
   property var hostIps: ({})
   property var banded: ({})
+  property var pendingOps: ({})
   property var pendingResolves: ({})
   property var resolveQueue: []
   property bool hostsLoaded: false
-  property bool restoredBorders: false
+  property bool paintQueued: false
   property string lastError: ""
   property int bandedCount: 0
   property int lastClientCount: 0
-
-  ListModel {
-    id: markerModel
-  }
 
   function entryFromConfig() {
     var plugins = root.shell && root.shell.shellConfig ? root.shell.shellConfig.plugins : null
@@ -73,25 +68,59 @@ Item {
     if (!inactiveBorderProc.running) inactiveBorderProc.running = true
   }
 
-  function restoreTerminalBorders() {
-    if (restoreProc.running) return
-    var lua = [
+  function queueOp(address, spec) {
+    var addr = HostBand.normalizeAddress(address)
+    if (!addr) return
+    var next = {}
+    for (var key in root.pendingOps) next[key] = root.pendingOps[key]
+    next[addr] = spec
+    root.pendingOps = next
+  }
+
+  function buildPaintLua(ops) {
+    var lines = [
+      "local theme_size = " + Number(root.themeBorderSize()),
+      "local theme_active = \"" + luaEscape(root.themeActiveBorder()) + "\"",
+      "local theme_inactive = \"" + luaEscape(root.themeInactiveBorder()) + "\"",
       "local function set(w, p, v) hl.dispatch(hl.dsp.window.set_prop({ window = w, prop = p, value = v })) end",
-      "local size = " + Number(root.themeBorderSize()),
-      "local active = \"" + luaEscape(root.themeActiveBorder()) + "\"",
-      "local inactive = \"" + luaEscape(root.themeInactiveBorder()) + "\"",
       "for _, w in ipairs(hl.get_windows() or {}) do",
-      "  local class = string.lower(tostring(w.class or \"\"))",
-      "  if class:find(\"ghostty\", 1, true) or class:find(\"foot\", 1, true) or class:find(\"kitty\", 1, true) or class:find(\"alacritty\", 1, true) or class:find(\"wezterm\", 1, true) then",
-      "    set(w, \"border_size\", size)",
-      "    set(w, \"active_border_color\", active)",
-      "    set(w, \"inactive_border_color\", inactive)",
-      "  end",
-      "end"
-    ].join("\n")
-    restoreProc.command = ["hyprctl", "eval", lua]
-    restoreProc.running = true
-    root.restoredBorders = true
+      "  local addr = tostring(w.address or \"\")"
+    ]
+    for (var addr in ops) {
+      var spec = ops[addr]
+      if (!spec) continue
+      if (spec.restore) {
+        lines.push("  if addr == \"" + luaEscape(addr) + "\" then")
+        lines.push("    set(w, \"border_size\", theme_size)")
+        lines.push("    set(w, \"active_border_color\", theme_active)")
+        lines.push("    set(w, \"inactive_border_color\", theme_inactive)")
+        lines.push("  end")
+      } else {
+        lines.push("  if addr == \"" + luaEscape(addr) + "\" then")
+        lines.push("    set(w, \"border_size\", " + Number(spec.size) + ")")
+        lines.push("    set(w, \"active_border_color\", \"" + luaEscape(spec.active) + "\")")
+        lines.push("    set(w, \"inactive_border_color\", \"" + luaEscape(spec.inactive) + "\")")
+        lines.push("  end")
+      }
+    }
+    lines.push("end")
+    return lines.join("\n")
+  }
+
+  function flushPaint() {
+    var ops = root.pendingOps
+    var empty = true
+    for (var k in ops) { empty = false; break }
+    if (empty) return
+    if (paintProc.running) {
+      root.paintQueued = true
+      return
+    }
+    root.pendingOps = ({})
+    var lua = root.buildPaintLua(ops)
+    paintFile.setText(lua)
+    paintProc.command = ["hyprctl", "eval", lua]
+    paintProc.running = true
   }
 
   function rememberHost(name, ip) {
@@ -171,16 +200,15 @@ Item {
       root.lastError = "hyprctl clients: not an array"
       return
     }
-    if (!root.restoredBorders)
-      root.restoreTerminalBorders()
 
     root.lastClientCount = clients.length
+    var seen = {}
     var nextBanded = {}
-    markerModel.clear()
     for (var i = 0; i < clients.length; i++) {
       var client = clients[i]
       var address = HostBand.normalizeAddress(client && client.address)
       if (!address) continue
+      seen[address] = true
       var identity = ""
       try {
         identity = root.sessionIdentity(client)
@@ -188,26 +216,26 @@ Item {
         root.lastError = String(e)
         continue
       }
-      if (!identity) continue
-      nextBanded[address] = identity
-      if (!HostBand.clientVisible(client)) continue
-      var rect = HostBand.clientRect(client)
-      if (!isFinite(rect.x) || !isFinite(rect.y) || rect.w < 24 || rect.h < 24)
+      if (!identity) {
+        if (root.banded[address])
+          root.queueOp(address, { restore: true })
         continue
-      var palette = HostBand.cornerPalette(identity)
-      markerModel.append({
-        address: address,
-        winX: rect.x,
-        winY: rect.y,
-        winW: rect.w,
-        winH: rect.h,
-        fill: palette.fill,
-        dim: palette.dim,
-        sheen: palette.sheen
+      }
+      nextBanded[address] = identity
+      var colors = HostBand.colorFromIdentity(identity)
+      root.queueOp(address, {
+        size: root.borderSize,
+        active: colors.active,
+        inactive: colors.inactive
       })
+    }
+    for (var oldAddr in root.banded) {
+      if (!seen[oldAddr])
+        root.queueOp(oldAddr, { restore: true })
     }
     root.banded = nextBanded
     root.bandedCount = Object.keys(nextBanded).length
+    root.flushPaint()
   }
 
   function scan() {
@@ -227,21 +255,10 @@ Item {
     root.localNames = HostBand.buildLocalNames(names)
   }
 
-  function screenNumber(screen, name, fallback) {
-    var value = screen && screen[name] !== undefined ? Number(screen[name]) : Number(fallback)
-    return isFinite(value) ? value : Number(fallback || 0)
-  }
-
-  function markerOnScreen(screen, winX, winY, winW, winH) {
-    if (!screen || winW <= 0 || winH <= 0) return false
-    var sx = root.screenNumber(screen, "virtualX", 0)
-    var sy = root.screenNumber(screen, "virtualY", 0)
-    var sw = root.screenNumber(screen, "width", 0)
-    var sh = root.screenNumber(screen, "height", 0)
-    if (sw <= 0 || sh <= 0) return false
-    var mx = winX + winW - root.cornerSize
-    var my = winY
-    return mx < sx + sw && mx + root.cornerSize > sx && my < sy + sh && my + root.cornerSize > sy
+  function restoreAll() {
+    for (var address in root.banded)
+      root.queueOp(address, { restore: true })
+    root.flushPaint()
   }
 
   function statusJson() {
@@ -251,7 +268,7 @@ Item {
     }
     return JSON.stringify({
       pluginId: root.pluginId,
-      cornerSize: root.cornerSize,
+      borderSize: root.borderSize,
       bandedCount: root.bandedCount,
       lastClientCount: root.lastClientCount,
       sessions: sessions,
@@ -267,10 +284,16 @@ Item {
   }
 
   Timer {
-    interval: 400
+    interval: 500
     running: true
     repeat: true
     onTriggered: root.scan()
+  }
+
+  FileView {
+    id: paintFile
+    path: root.cacheDir + "/last-paint.lua"
+    printErrors: false
   }
 
   FileView {
@@ -347,7 +370,13 @@ Item {
   }
 
   Process {
-    id: restoreProc
+    id: paintProc
+    onExited: function() {
+      if (root.paintQueued) {
+        root.paintQueued = false
+        root.flushPaint()
+      }
+    }
   }
 
   Process {
@@ -381,59 +410,9 @@ Item {
           || name === "windowtitlev2"
           || name === "openwindow"
           || name === "closewindow"
-          || name === "movewindow"
-          || name === "movewindowv2"
           || name === "activewindow"
-          || name === "activewindowv2"
-          || name === "fullscreen"
-          || name === "changefloatingmode"
-          || name === "workspace"
-          || name === "workspacev2")
+          || name === "activewindowv2")
         root.scanSoon()
-    }
-  }
-
-  Variants {
-    model: Quickshell.screens
-
-    PanelWindow {
-      id: panel
-      required property var modelData
-
-      screen: modelData
-      visible: markerModel.count > 0
-      anchors { top: true; bottom: true; left: true; right: true }
-      color: "transparent"
-      exclusionMode: ExclusionMode.Ignore
-      WlrLayershell.namespace: "omarchy-remote-terminal-indicator"
-      WlrLayershell.layer: WlrLayer.Overlay
-      WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
-      mask: Region {}
-
-      readonly property int screenX: root.screenNumber(modelData, "virtualX", 0)
-      readonly property int screenY: root.screenNumber(modelData, "virtualY", 0)
-
-      Repeater {
-        model: markerModel
-
-        CornerMark {
-          required property int winX
-          required property int winY
-          required property int winW
-          required property int winH
-          required property string fill
-          required property string dim
-          required property string sheen
-
-          visible: root.markerOnScreen(panel.modelData, winX, winY, winW, winH)
-          markSize: root.cornerSize
-          x: winX + winW - width - panel.screenX
-          y: winY - panel.screenY
-          fillColor: fill
-          dimColor: dim
-          sheenColor: sheen
-        }
-      }
     }
   }
 
@@ -454,4 +433,6 @@ Item {
     root.refreshTheme()
     root.scanSoon()
   }
+
+  Component.onDestruction: root.restoreAll()
 }

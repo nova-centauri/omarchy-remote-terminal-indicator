@@ -95,7 +95,7 @@ function extractHost(rest) {
 function remoteHost(title, localNames) {
   var value = trim(title).replace(/\s+/g, " ")
   if (!value) return null
-  var match = value.match(/^([^@\s]+)@(.+)$/)
+  var match = value.match(/([^@\s]+)@(.+)$/)
   if (!match) return null
   var host = extractHost(match[2])
   if (!host || isLocalHost(host, localNames)) return null

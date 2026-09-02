@@ -2,13 +2,12 @@
 
 ![Terminal SSHed to wg-hub with a colored host border](screenshot.png)
 
-A small 45° corner tint on any Omarchy terminal that has a remote session
-open. The color is derived from the destination IP, so a given machine
-always gets the same mark — on every window, after every reconnect.
+Colors the Hyprland border of any Omarchy terminal that has a remote SSH
+session open. The color is derived from the destination IP, so a given
+machine always gets the same band — on every window, after every reconnect.
 
-It watches terminal titles (`user@host: cwd`) and paints a folded corner on
-the top-right of the window. When the remote session ends, the mark
-disappears and the theme border is left alone.
+It watches terminal titles (`user@host: cwd`) and paints a thin host-colored
+frame. When the remote session ends, the theme border comes back.
 
 Works with Foot, Ghostty, Kitty, Alacritty, WezTerm, and anything Hyprland
 tags as a terminal.
@@ -52,11 +51,12 @@ Optional keys on the `plugins[]` entry in `~/.config/omarchy/shell.json`:
 ```json
 {
   "id": "io.github.nova-centauri.remote-terminal-indicator",
-  "cornerSize": 26
+  "borderSize": 3
 }
 ```
 
-`cornerSize` is the folded-corner size in pixels. Default is `26`.
+`borderSize` is the Hyprland border width while a session is remote. Default
+is `3`. Theme border width is restored when you disconnect.
 
 Host → IP mappings are cached in
 `~/.cache/omarchy-remote-terminal-indicator/hosts` so a given hostname keeps
@@ -68,8 +68,7 @@ the same color even if DNS is slow next time.
 omarchy plugin remove io.github.nova-centauri.remote-terminal-indicator
 ```
 
-Open remote terminals lose the corner mark as the plugin unloads. The
-Hyprland theme border is not changed.
+Open SSH windows drop back to the theme border as the plugin unloads.
 
 ## License
 
