@@ -184,7 +184,7 @@ function hueFromIdentity(identity) {
       + Number(parts[3]) * 283
       + Number(parts[4]) * 419) % 360
   }
-  return fnv1a(identity) % 360
+  return ((fnv1a(identity) % 360) + 360) % 360
 }
 
 function hex2(n) {

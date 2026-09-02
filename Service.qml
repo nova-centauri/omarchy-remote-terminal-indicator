@@ -43,18 +43,62 @@ Item {
     return String(value == null ? "" : value).replace(/\\/g, "\\\\").replace(/"/g, '\\"')
   }
 
-  function setProp(address, prop, value, numeric) {
+  property var pendingOps: ({})
+  property bool paintQueued: false
+
+  function queueOp(address, spec) {
     var addr = HostBand.normalizeAddress(address)
     if (!addr) return
-    var encoded = numeric ? String(value) : '"' + luaEscape(value) + '"'
-    var request = 'hl.dsp.window.set_prop({ window = "'
-      + luaEscape(addr)
-      + '", prop = "'
-      + luaEscape(prop)
-      + '", value = '
-      + encoded
-      + " })"
-    Quickshell.execDetached(["hyprctl", "dispatch", request])
+    var next = {}
+    for (var key in root.pendingOps) next[key] = root.pendingOps[key]
+    next[addr] = spec
+    root.pendingOps = next
+  }
+
+  function buildPaintLua(ops) {
+    var lines = [
+      "local theme_size = " + Number(root.themeBorderSize()),
+      "local theme_active = \"" + luaEscape(root.themeActiveBorder()) + "\"",
+      "local theme_inactive = \"" + luaEscape(root.themeInactiveBorder()) + "\"",
+      "local function set(w, p, v) hl.dispatch(hl.dsp.window.set_prop({ window = w, prop = p, value = v })) end",
+      "for _, w in ipairs(hl.get_windows() or {}) do",
+      "  local addr = tostring(w.address or \"\")"
+    ]
+    for (var addr in ops) {
+      var spec = ops[addr]
+      if (!spec) continue
+      if (spec.restore) {
+        lines.push("  if addr == \"" + luaEscape(addr) + "\" then")
+        lines.push("    set(w, \"border_size\", theme_size)")
+        lines.push("    set(w, \"active_border_color\", theme_active)")
+        lines.push("    set(w, \"inactive_border_color\", theme_inactive)")
+        lines.push("  end")
+      } else {
+        lines.push("  if addr == \"" + luaEscape(addr) + "\" then")
+        lines.push("    set(w, \"border_size\", " + Number(spec.size) + ")")
+        lines.push("    set(w, \"active_border_color\", \"" + luaEscape(spec.active) + "\")")
+        lines.push("    set(w, \"inactive_border_color\", \"" + luaEscape(spec.inactive) + "\")")
+        lines.push("  end")
+      }
+    }
+    lines.push("end")
+    return lines.join("\n")
+  }
+
+  function flushPaint() {
+    var ops = root.pendingOps
+    var empty = true
+    for (var k in ops) { empty = false; break }
+    if (empty) return
+    if (paintProc.running) {
+      root.paintQueued = true
+      return
+    }
+    root.pendingOps = ({})
+    var lua = root.buildPaintLua(ops)
+    paintFile.setText(lua)
+    paintProc.command = ["hyprctl", "eval", lua]
+    paintProc.running = true
   }
 
   function themeBorderSize() {
@@ -133,9 +177,11 @@ Item {
 
   function applyBand(address, identity) {
     var colors = HostBand.colorFromIdentity(identity)
-    root.setProp(address, "active_border_color", colors.active)
-    root.setProp(address, "inactive_border_color", colors.inactive)
-    root.setProp(address, "border_size", String(root.borderSize))
+    root.queueOp(address, {
+      size: root.borderSize,
+      active: colors.active,
+      inactive: colors.inactive
+    })
     var next = {}
     for (var key in root.banded) next[key] = root.banded[key]
     next[address] = identity
@@ -145,14 +191,7 @@ Item {
 
   function restore(address) {
     if (!address) return
-    // -1 clears the per-window override (Hyprland treats it as "not set").
-    // Then paint the live theme so the window does not keep the SSH color.
-    root.setProp(address, "active_border_color", -1, true)
-    root.setProp(address, "inactive_border_color", -1, true)
-    root.setProp(address, "border_size", -1, true)
-    root.setProp(address, "active_border_color", root.themeActiveBorder())
-    root.setProp(address, "inactive_border_color", root.themeInactiveBorder())
-    root.setProp(address, "border_size", String(root.themeBorderSize()))
+    root.queueOp(address, { restore: true })
     if (!root.banded[address]) return
     var next = {}
     for (var key in root.banded) {
@@ -167,6 +206,7 @@ Item {
     for (var address in root.banded) addresses.push(address)
     for (var i = 0; i < addresses.length; i++)
       root.restore(addresses[i])
+    root.flushPaint()
   }
 
   function consider(win, titleOverride) {
@@ -197,7 +237,6 @@ Item {
       else root.enqueueResolve(host)
     }
 
-    if (root.banded[address] === identity) return
     root.applyBand(address, identity)
   }
 
@@ -235,6 +274,7 @@ Item {
       }
     }
     root.bandedCount = Object.keys(root.banded).length
+    root.flushPaint()
   }
 
   function scan() {
@@ -274,6 +314,12 @@ Item {
     interval: 40
     repeat: false
     onTriggered: root.scan()
+  }
+
+  FileView {
+    id: paintFile
+    path: root.cacheDir + "/last-paint.lua"
+    printErrors: false
   }
 
   FileView {
@@ -346,6 +392,16 @@ Item {
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: inactiveBorderProc.lastText = text
+    }
+  }
+
+  Process {
+    id: paintProc
+    onExited: function() {
+      if (root.paintQueued) {
+        root.paintQueued = false
+        root.flushPaint()
+      }
     }
   }
 
